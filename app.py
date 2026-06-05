@@ -4,17 +4,25 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# Arayüz
+# Arayüz Ayarları
+st.set_page_config(layout="wide")
 st.title("Enerji Maliyet Optimizasyon Paneli")
-production_load = st.number_input("Sabit Üretim Yükü (MW)", min_value=1.0, value=20.0)
 
-# Solver Fonksiyonu
-def solve_energy(prices, prod_load):
-    # Fiyat verisinin doğruluğunu kontrol et
-    if prices is None: return None
-    
-    # 24 saatlik periyot
-    periods = range(len(prices))
+# 1. EPİAŞ Veri Çekme Fonksiyonu
+def get_epias_prices():
+    url = "https://seffaflik.epias.com.tr/v1/market/day-ahead-market/market-clearing-price"
+    today = datetime.now().strftime("%Y-%m-%dT00:00:00+03:00")
+    params = {"startDate": today, "endDate": today}
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()['body']['mcpList']
+        return pd.DataFrame(data)
+    except:
+        return None
+
+# 2. Solver Optimizasyon Fonksiyonu
+def solve_energy(prices_df, prod_load):
+    periods = range(len(prices_df))
     model = pulp.LpProblem("Cost_Minimization", pulp.LpMinimize)
     
     # Değişkenler
@@ -23,15 +31,15 @@ def solve_energy(prices, prod_load):
     p_discharge = pulp.LpVariable.dicts("Discharge", periods, lowBound=0, upBound=20)
     soc = pulp.LpVariable.dicts("SOC", periods, lowBound=0, upBound=100)
     
-    # Amaç Fonksiyonu: Toplam maliyeti minimize et
-    model += pulp.lpSum([p_grid[t] * prices['price'][t] for t in periods])
+    # Amaç: Şebekeden alım maliyetini minimize et
+    model += pulp.lpSum([p_grid[t] * prices_df['price'][t] for t in periods])
     
     # Kısıtlar
-    heat_loss_rate = 0.005 # Saatlik kayıp katsayısı
+    heat_loss_rate = 0.005 # Saatlik %0.5 kayıp
     
     for t in periods:
-        # Enerji Dengesi: Şebeke + Deşarj - Şarj = Sabit Üretim Yükü
-        model += p_grid[t] + p_discharge[t] - p_charge[t] == prod_load
+        # Enerji Dengesi (Şebeke + Deşarj = Üretim + Şarj)
+        model += p_grid[t] + p_discharge[t] == prod_load + p_charge[t]
         
         # SOC Güncelleme
         if t > 0:
@@ -39,13 +47,33 @@ def solve_energy(prices, prod_load):
         else:
             model += soc[t] == p_charge[t]
             
-    model.solve()
-    return {t: p_grid[t].varValue for t in periods}
+    model.solve(pulp.PULP_CBC_CMD(msg=0))
+    
+    return {
+        "grid": [p_grid[t].varValue for t in periods],
+        "charge": [p_charge[t].varValue for t in periods],
+        "discharge": [p_discharge[t].varValue for t in periods]
+    }
 
-# Çalıştırma
+# 3. Arayüz Elemanları
+production_load = st.number_input("Sabit Üretim Yükü (MW)", min_value=1.0, value=20.0)
+
+if st.button("EPİAŞ Verilerini Güncelle"):
+    df = get_epias_prices()
+    if df is not None:
+        st.session_state['prices'] = df
+        st.success("Veriler güncellendi!")
+        st.dataframe(df.head(5))
+    else:
+        st.error("Veri alınamadı.")
+
 if st.button("Solver'ı Çalıştır"):
-    # Örnek EPİAŞ veri çekimi veya session state'den okuma
     if 'prices' in st.session_state:
         results = solve_energy(st.session_state['prices'], production_load)
-        st.success("Maliyet optimize edildi.")
-        st.line_chart(pd.DataFrame(results, index=[0]).T)
+        st.success("Optimizasyon tamamlandı!")
+        
+        # Sonuçları grafik olarak göster
+        chart_data = pd.DataFrame(results, index=range(len(results["grid"])))
+        st.line_chart(chart_data)
+    else:
+        st.warning("Önce EPİAŞ verilerini güncelleyin.")
