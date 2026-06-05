@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(layout="wide")
 st.title("Enerji Maliyet Optimizasyon Paneli")
 
-# 1. EPİAŞ Veri Çekme Fonksiyonu
+# 1. EPİAŞ Veri Çekme
 def get_epias_prices():
     url = "https://seffaflik.epias.com.tr/v1/market/day-ahead-market/market-clearing-price"
     today = datetime.now().strftime("%Y-%m-%dT00:00:00+03:00")
@@ -21,7 +21,7 @@ def get_epias_prices():
         return None
 
 # 2. Solver Optimizasyon Fonksiyonu
-def solve_energy(prices_df, prod_load):
+def solve_energy(prices_df, prod_load, manual_mode, manual_mw):
     periods = range(len(prices_df))
     model = pulp.LpProblem("Cost_Minimization", pulp.LpMinimize)
     
@@ -38,6 +38,10 @@ def solve_energy(prices_df, prod_load):
     heat_loss_rate = 0.005 # Saatlik %0.5 kayıp
     
     for t in periods:
+        # Manuel mod aktifse şarjı sabitle, değilse solver serbest bırak
+        if manual_mode:
+            model += p_charge[t] == manual_mw
+            
         # Enerji Dengesi (Şebeke + Deşarj = Üretim + Şarj)
         model += p_grid[t] + p_discharge[t] == prod_load + p_charge[t]
         
@@ -55,8 +59,12 @@ def solve_energy(prices_df, prod_load):
         "discharge": [p_discharge[t].varValue for t in periods]
     }
 
-# 3. Arayüz Elemanları
+# 3. Arayüz ve Kontroller
 production_load = st.number_input("Sabit Üretim Yükü (MW)", min_value=1.0, value=20.0)
+
+# Manuel Mod Kontrolleri
+manual_mode = st.checkbox("Manuel Tuz Şarjı")
+manual_mw = st.number_input("Manuel Şarj Gücü (MW)", min_value=0.0, max_value=20.0, value=10.0, disabled=not manual_mode)
 
 if st.button("EPİAŞ Verilerini Güncelle"):
     df = get_epias_prices()
@@ -69,7 +77,7 @@ if st.button("EPİAŞ Verilerini Güncelle"):
 
 if st.button("Solver'ı Çalıştır"):
     if 'prices' in st.session_state:
-        results = solve_energy(st.session_state['prices'], production_load)
+        results = solve_energy(st.session_state['prices'], production_load, manual_mode, manual_mw)
         st.success("Optimizasyon tamamlandı!")
         
         # Sonuçları grafik olarak göster
