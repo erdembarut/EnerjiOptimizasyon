@@ -1,56 +1,44 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import io
 
+# Sayfa Ayarları ve Yazı Boyutu (Okunabilirlik İçin)
 st.set_page_config(layout="wide", page_title="Endüstriyel SCADA Paneli")
-
-# Görsel Stil
 st.markdown("""
     <style>
-    .card { background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 20px; border-radius: 10px; }
+    .main { font-size: 18px; }
+    div[data-testid="stMetricValue"] { font-size: 24px !important; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🏭 Endüstriyel Enerji Optimizasyonu & SCADA Yönetim Paneli")
 
-# --- 1. BÖLÜM: YÖNETİM GRUPLARI ---
-c1, c2, c3 = st.columns(3)
-
-with c1:
-    st.subheader("🔥 1. DOĞALGAZ & PROSES YÜKLERİ")
-    uretim = st.number_input("Üretim Kapasitesi (ton/gün):", value=250)
-    hood = st.number_input("Hood Spesifik Tüketim (kWh/ton):", value=535)
-    buhar = st.number_input("Buhar Spesifik Tüketim (kWh/ton):", value=603)
-    gaz_fiyat = st.number_input("Doğalgaz Birim Fiyatı (TL/Nm3):", value=18.0)
-    gaz_isil = st.number_input("Doğalgaz Isıl Değeri (kWh/Nm3):", value=10.64)
-    kazan = st.number_input("Brülör / Kazan Verimi (%):", value=90)
-
-with c2:
+# --- 1. YÖNETİM GRUPLARI ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.subheader("🔥 1. DOĞALGAZ & PROSES")
+    uretim = st.number_input("Üretim (ton/gün):", value=250)
+    hood = st.number_input("Hood Tüketim (kWh/ton):", value=535)
+    gaz_fiyat = st.number_input("Gaz Fiyatı (TL/Nm3):", value=18.0)
+with col2:
     st.subheader("⚡ 2. ELEKTRİK ALTYAPISI")
-    sabit = st.number_input("Sabit Elektrik Tüketimi (kWh/ton):", value=789)
-    ges = st.number_input("Kurulu GES Gücü (MW):", value=15.0)
-    res = st.number_input("Kurulu RES Gücü (MW):", value=12.0)
-    res_bedel = st.number_input("RES Hat Kullanım Bedeli (TL/kWh):", value=0.35)
-    rezistans = st.number_input("Elektrikli Rezistans Verimi (%):", value=98)
+    ges = st.number_input("Kurulu GES (MW):", value=15.0)
+    res = st.number_input("Kurulu RES (MW):", value=12.0)
+    rezistans = st.number_input("Rezistans Verimi (%):", value=98)
+with col3:
+    st.subheader("🔋 3. MOLTEN SALT DEPOLAMA")
+    tuz_kap = st.number_input("Tuz Kapasitesi (MWh):", value=120)
+    sarj_guc = st.number_input("Şarj Gücü (MW):", value=25)
+    verim = st.number_input("Verim (%):", value=90)
 
-with c3:
-    st.subheader("🔋 3. MOLTEN SALT (ERİMİŞ TUZ) DEPOLAMA")
-    tuz_kap = st.number_input("Tuz Isıl Kapasitesi (MWh Isı):", value=120)
-    devreden = st.number_input("Önceki Günden Devreden (MWh):", value=40)
-    hedef = st.number_input("Sonraki Güne Hedef Tuz (MWh):", value=40)
-    min_kotas = st.number_input("Min. Tuz Kotası (MWh):", value=10)
-    sarj_guc = st.number_input("Molten Salt Şarj Gücü (MW):", value=25)
-    verim = st.number_input("Molten Salt Çevrim Verimi (%):", value=90)
+# --- 2. AKSİYON BUTONLARI ---
+b1, b2 = st.columns(2)
+if b1.button("🤖 HİBRİD OPTİMİZASYON (Fiyat Bazlı)", use_container_width=True):
+    st.session_state.mode = "Hibrit"
+if b2.button("🍰 GELENEKSEL YÖNTEME DÖN (%100 Gaz)", use_container_width=True):
+    st.session_state.mode = "Gaz"
 
-# --- 2. BÖLÜM: AKSİYON BUTONLARI ---
-btn1, btn2 = st.columns(2)
-with btn1:
-    st.button("🤖 HİBRİD OPTİMİZASYON (Fiyat Bazlı 3'lü Arbitraj)", use_container_width=True)
-with btn2:
-    st.button("🍰 GELENEKSEL YÖNTEME DÖN (%100 Gaz)", use_container_width=True)
-
-# --- 3. BÖLÜM: SCADA TABLOSU ---
+# --- 3. SCADA TABLOSU ---
 st.subheader("⏱ Saatlik Operasyonel Çizelge")
 
 if 'df' not in st.session_state:
@@ -64,32 +52,30 @@ if 'df' not in st.session_state:
         "Balans": ["0 | 0 TL"] * 24
     })
 
-# Tablo düzenleme alanı
 edited_df = st.data_editor(st.session_state.df, use_container_width=True)
 
-# --- 4. BÖLÜM: KPI KUTULARI (Görseldeki o kutular) ---
+# --- 4. KPI KUTULARI (Dinamik Hesaplama) ---
 st.divider()
-c_kpi1, c_kpi2, c_kpi3, c_kpi4 = st.columns(4)
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
-# Dinamik Hesaplama
-gaz_toplam = edited_df["Gaz (Nm3)"].sum()
-gaz_maliyet = gaz_toplam * gaz_fiyat
-sebeke_balans = -52.892 # Örnek hesaplama
-finansal_durum = -220.006
+gaz_top = edited_df["Gaz (Nm3)"].sum()
+gaz_mal = gaz_top * gaz_fiyat
+sebeke = -52.892
+finans = -220.006
 
-c_kpi1.metric("TOPLAM GAZ TÜKETİMİ", f"{gaz_toplam:,.0f} Nm3")
-c_kpi2.metric("TOPLAM GAZ MALİYETİ", f"{gaz_maliyet:,.0f} TL")
-c_kpi3.metric("NET ŞEBEKE BALANSI", f"{sebeke_balans:,.3f} kWh")
-c_kpi4.metric("ŞEBEKE FİNANSAL DURUM", f"{finansal_durum:,.0f} TL")
+kpi1.metric("TOPLAM GAZ TÜKETİMİ", f"{gaz_top:,.0f} Nm3")
+kpi2.metric("TOPLAM GAZ MALİYETİ", f"{gaz_mal:,.0f} TL")
+kpi3.metric("NET ŞEBEKE BALANSI", f"{sebeke:,.3f} kWh")
+kpi4.metric("ŞEBEKE FİNANSAL DURUM", f"{finans:,.0f} TL")
 
-# --- 5. BÖLÜM: SONUÇ KARTLARI ---
-res1, res2, res3 = st.columns(3)
-res1.markdown("### GELENEKSEL YÖNTEM\n# 1.151.181 TL")
-res2.markdown("### MEVCUT SENARYO\n# 524.675 TL")
-res3.markdown("### SAĞLANAN NET KAZANÇ\n# 626.506 TL")
+# --- 5. SONUÇLAR ---
+r1, r2, r3 = st.columns(3)
+r1.markdown("### GELENEKSEL YÖNTEM\n# 1.151.181 TL")
+r2.markdown("### MEVCUT SENARYO\n# 524.675 TL")
+r3.markdown("### SAĞLANAN NET KAZANÇ\n# 626.506 TL")
 
-# Excel İhracat
+# İhracat
 output = io.BytesIO()
 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
     edited_df.to_excel(writer, index=False)
-st.download_button("📥 Bu Tabloyu Excel Olarak İndir", output.getvalue(), "scada_raporu.xlsx")
+st.download_button("📥 Tabloyu Excel Olarak İndir", output.getvalue(), "scada_raporu.xlsx")
