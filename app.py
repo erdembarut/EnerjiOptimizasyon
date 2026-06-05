@@ -1,79 +1,67 @@
 import streamlit as st
-import pulp
 import pandas as pd
-import requests
 import numpy as np
-from datetime import datetime
 
-# --- Arayüz Yapılandırması ---
-st.set_page_config(page_title="Enerji Optimizasyon Paneli", layout="wide")
-st.title("🏭 Enerji Maliyet & Üretim Optimizasyon Paneli")
+st.set_page_config(layout="wide", page_title="Endüstriyel Enerji Paneli")
 
-# --- Veri Çekme / Simülasyon ---
-def get_epias_data():
-    url = "https://seffaflik.epias.com.tr/v1/market/day-ahead-market/market-clearing-price"
-    today = datetime.now().strftime("%Y-%m-%dT00:00:00+03:00")
-    try:
-        response = requests.get(url, params={"startDate": today, "endDate": today}, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
-        if response.status_code == 200:
-            return pd.DataFrame(response.json()['body']['mcpList'])
-        raise Exception()
-    except:
-        st.warning("Canlı veri alınamadı, simülasyon verisi kullanılıyor.")
-        return pd.DataFrame({'date': [f"{h:02}:00" for h in range(24)], 'price': [500 + (100 * np.sin(h/24 * 2 * np.pi)) for h in range(24)]})
+# 1. Başlık ve Üst Kartlar (Input Parametreleri)
+st.title("🏭 Endüstriyel Enerji Optimizasyonu & SCADA Yönetim Paneli")
 
-# --- Solver Motoru ---
-def solve_energy(prices_df, prod_load, max_grid, manual_mode, manual_mw):
-    periods = range(len(prices_df))
-    model = pulp.LpProblem("Cost_Minimization", pulp.LpMinimize)
-    
-    p_grid = pulp.LpVariable.dicts("Grid", periods, lowBound=0)
-    p_charge = pulp.LpVariable.dicts("Charge", periods, lowBound=0, upBound=20)
-    p_discharge = pulp.LpVariable.dicts("Discharge", periods, lowBound=0, upBound=20)
-    soc = pulp.LpVariable.dicts("SOC", periods, lowBound=0, upBound=100)
-    
-    model += pulp.lpSum([p_grid[t] * prices_df['price'][t] for t in periods])
-    
-    for t in periods:
-        model += p_grid[t] <= max_grid
-        if manual_mode: model += p_charge[t] == manual_mw
-        model += p_grid[t] + p_discharge[t] == prod_load + p_charge[t]
-        
-        if t > 0:
-            model += soc[t] == soc[t-1] + (p_charge[t] * 0.95) - (p_discharge[t] / 0.95) - (soc[t-1] * 0.005)
-        else:
-            model += soc[t] == p_charge[t]
-            
-    model.solve(pulp.PULP_CBC_CMD(msg=0))
-    
-    return {
-        "Grid_MW": [p_grid[t].varValue for t in periods],
-        "Şarj_MW": [p_charge[t].varValue for t in periods],
-        "Deşarj_MW": [p_discharge[t].varValue for t in periods]
-    }
-
-# --- Dashboard Layout ---
 col1, col2, col3 = st.columns(3)
-with col1:
-    prod_load = st.number_input("Üretim Yükü (MW)", value=20.0)
-with col2:
-    max_grid = st.number_input("Şebeke Limit (MW)", value=25.0)
-with col3:
-    manual_mode = st.checkbox("Manuel Şarj")
-    manual_mw = st.number_input("Manuel Şarj (MW)", value=10.0, disabled=not manual_mode)
 
-if st.button("🚀 Optimizasyonu Başlat"):
-    prices = get_epias_prices()
-    results = solve_energy(prices, prod_load, max_grid, manual_mode, manual_mw)
-    
-    # Görselleştirme
-    res_df = pd.DataFrame(results, index=range(len(results["Grid_MW"])))
-    st.line_chart(res_df)
-    
-    # Metrikler ve Tablo
-    base_cost = sum(prod_load * p for p in prices['price'])
-    opt_cost = sum(results["Grid_MW"][t] * prices['price'][t] for t in range(len(prices)))
-    
-    st.metric("Tahmini Günlük Tasarruf (TL)", f"{base_cost - opt_cost:,.2f} TL")
-    st.subheader("Saatlik Aksiyon Planı")
-    st.dataframe(res_df.style.highlight_max(axis=0))
+with col1:
+    st.subheader("🔥 Doğalgaz & Proses Yükleri")
+    uretim = st.number_input("Üretim Kapasitesi (ton/gün):", value=250)
+    hood_tuk = st.number_input("Hood Spesifik Tüketim (kWh/ton):", value=535)
+    gaz_fiyat = st.number_input("Doğalgaz Birim Fiyatı (TL/Nm3):", value=18.0)
+
+with col2:
+    st.subheader("⚡ Elektrik Altyapısı")
+    sabit_elk = st.number_input("Sabit Elektrik Tüketimi (kWh/ton):", value=789)
+    ges_gucu = st.number_input("Kurulu GES Gücü (MW):", value=15.0)
+    res_gucu = st.number_input("Kurulu RES Gücü (MW):", value=12.0)
+
+with col3:
+    st.subheader("🔋 Molten Salt Depolama")
+    salt_kapasite = st.number_input("Tuz Isıl Kapasitesi (MWh Isı):", value=120)
+    salt_verim = st.number_input("Molten Salt Çevrim Verimi (%):", value=90)
+    st.metric("Gün Sonu Gerçekleşen Bakiye", "120.0 MWh")
+
+st.divider()
+
+# 2. Hibrit Optimizasyon ve Geleneksel Yöntem Butonları
+b1, b2 = st.columns(2)
+with b1:
+    st.button("🤖 HİBRİT OPTİMİZASYON (Fiyat Bazlı 3'lü Arbitraj)", use_container_width=True)
+with b2:
+    st.button("🍰 GELENEKSEL YÖNTEME DÖN (%100 Gaz)", use_container_width=True)
+
+# 3. İnteraktif Tablo (SCADA Yönetim Ekranı)
+st.subheader("Saatlik Operasyonel Çizelge")
+
+# Örnek veri seti (Sizin tablonuzun yapısı)
+data = {
+    "Saat": [f"{h:02}:00" for h in range(24)],
+    "Elek. Fiyatı": [2.8] * 24,
+    "GES?": [True] * 24,
+    "RES?": [True] * 24,
+    "Gaz %": [100] * 24,
+    "Tuz %": [0] * 24,
+    "Depo Seviyesi": [43.3] * 24
+}
+df = pd.DataFrame(data)
+
+# Data Editor: Kullanıcının hücreleri düzenlemesini sağlar
+edited_df = st.data_editor(
+    df, 
+    column_config={
+        "GES?": st.column_config.CheckboxColumn(),
+        "RES?": st.column_config.CheckboxColumn(),
+    },
+    use_container_width=True
+)
+
+# 4. Hesaplama Mantığı (Örnek)
+if st.button("Günlük Maliyeti Hesapla"):
+    # Burada editlenen tablodan gelen verilerle toplam maliyet hesaplanacak
+    st.success("Toplam Maliyet: 450.000 TL")
